@@ -20,4 +20,11 @@ void load_serial_config(unsigned int addr, struct ser_conf *conf) {
   }
 }
 
+void load_slave_addr(unsigned int addr, byte *slave_addr) {
+  EEPROM.get(addr, *slave_addr);
+  if(*slave_addr == 0) {
+    *slave_addr = 4;
+  }
+}
+
 #endif

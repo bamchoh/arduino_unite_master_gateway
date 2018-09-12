@@ -39,16 +39,10 @@ enum comm_state {
 };
 
 struct ser_conf ser1_conf = {0};
+byte slvno = 0;
 #define EEP_ADDR1 0
 #define EEP_ADDR2 (EEP_ADDR1 + sizeof(ser1_conf))
-
-void serialEvent1() {
-  rx1->read();
-}
-
-void serialEvent2() {
-  rx2->read();
-}
+#define EEP_ADDR3 (EEP_ADDR2 + sizeof(byte))
 
 void print_serial_conf(struct ser_conf *conf) {
   master_serial->print(conf->speed);
@@ -61,13 +55,40 @@ void print_serial_conf(struct ser_conf *conf) {
   master_serial->println();
 }
 
+void print_slvno(byte no) {
+  master_serial->print("slvno : ");
+  master_serial->print(no);
+  master_serial->println();
+}
+
+enum CONF_KEY {
+  KEY_SPEED,
+  KEY_PARITY,
+  KEY_STOPBIT,
+  KEY_LENGTH,
+  KEY_SLAVE_ADDR,
+  KEY_SAVE,
+  KEY_ARRAY_SIZE,
+};
+
+const String keys[KEY_ARRAY_SIZE] = {
+  "speed:",
+  "parity:",
+  "stopbit:",
+  "length:",
+  "slvno:",
+  "save"
+};
+
 void serialEvent() {
   if(mode_state != OFFLINE) {
+    rx2->read();
     return;
   }
 
   bool changed = false;
   struct ser_conf new_conf = ser1_conf;
+  byte new_slvno = slvno;
 
   while(1) {
     if(master_serial->available() == 0) {
@@ -77,21 +98,22 @@ void serialEvent() {
     
     String line = master_serial->readString();
   
-    const char *key_speed = "speed:";
-    const char *key_parity = "parity:";
-    const char *key_stopbit = "stopbit:";
-    const char *key_length = "length:";
-    const char *key_save = "save";
-
-    if(line.startsWith(key_speed)) {
-      changed = change_speed(&new_conf, parse_baud(line.substring(strlen(key_speed))));
-    } else if(line.startsWith(key_parity)) {
-      changed = change_parity(&new_conf, parse_parity(line.substring(strlen(key_parity))));
-    } else if(line.startsWith(key_stopbit)) {
-      changed = change_stopbit(&new_conf, parse_stopbit(line.substring(strlen(key_stopbit))));
-    } else if(line.startsWith(key_length)) {
-      changed = change_length(&new_conf, parse_length(line.substring(strlen(key_length))));
-    } else if(line.equals(key_save)) {
+    if(line.startsWith(keys[KEY_SPEED])) {
+      changed = change_speed(&new_conf, parse_baud(line.substring(keys[KEY_SPEED].length())));
+    } else if(line.startsWith(keys[KEY_PARITY])) {
+      changed = change_parity(&new_conf, parse_parity(line.substring(keys[KEY_PARITY].length())));
+    } else if(line.startsWith(keys[KEY_STOPBIT])) {
+      changed = change_stopbit(&new_conf, parse_stopbit(line.substring(keys[KEY_STOPBIT].length())));
+    } else if(line.startsWith(keys[KEY_LENGTH])) {
+      changed = change_length(&new_conf, parse_length(line.substring(keys[KEY_LENGTH].length())));
+    } else if(line.startsWith(keys[KEY_SLAVE_ADDR])) {
+      new_slvno = line.substring(keys[KEY_SLAVE_ADDR].length()).toInt();
+      if(new_slvno == 0) {
+        new_slvno = slvno;
+      } else {
+        changed = true;
+      }
+    } else if(line.equals(keys[KEY_SAVE])) {
       break;
     } else {
       master_serial->print("invalid text!! : ");
@@ -100,18 +122,25 @@ void serialEvent() {
     
     master_serial->print("current settings:");
     print_serial_conf(&new_conf);
+    print_slvno(new_slvno);
   }
 
   if(changed) {
     master_serial->println("save");
     master_serial->print("old settings:");
     print_serial_conf(&ser1_conf);
+    print_slvno(slvno);
     master_serial->print("new settings:");
     print_serial_conf(&new_conf);
-    EEPROM.put(0, new_conf);
-    on_change_mode();
-    software_reset();
+    print_slvno(new_slvno);
+    EEPROM.put(EEP_ADDR1, new_conf);
+    EEPROM.put(EEP_ADDR3, new_slvno);
+  } else {
+    master_serial->println("no any changes. did not save.");
   }
+  master_serial->println("restaring...");
+  on_change_mode();
+  software_reset();
 }
 
 byte read_mode() {
@@ -140,9 +169,16 @@ void offline_setup() {
   master_serial->setTimeout(200);
   master_serial->print("current settings:");
   print_serial_conf(&ser1_conf);
+
+  master_serial->println("commands:");
+  for(int i = 0; i < (sizeof(keys) / sizeof(keys[0])); i++) {
+    master_serial->print("  ");
+    master_serial->println(keys[i]);
+  }
 }
 
 void online_setup() {
+  slave_serial = &Serial1;
   slave_serial->begin(ser1_conf.speed, ser1_conf.config);
   rx1 = new Buffer(slave_serial);
   rx2 = new Buffer(master_serial);
@@ -157,15 +193,16 @@ void setup() {
   pinMode(CONF_MODE_LED, OUTPUT);
   pinMode(MODE_CHNG_PIN, INPUT_PULLUP);
 
-  slave_serial = &Serial1;
   master_serial = &Serial;
   master_serial->begin(115200);
 
   attachInterrupt(digitalPinToInterrupt(MODE_CHNG_PIN), on_change_mode, FALLING);
   
   load_serial_config(EEP_ADDR1, &ser1_conf);
-
-  tbit = ceil(10000000 / ser1_conf.speed);
+  
+  load_slave_addr(EEP_ADDR3, &slvno);
+  
+  tbit = ceil(1000000 / ser1_conf.speed);
 
   switch(read_mode()) {
     case OFFLINE:
@@ -173,7 +210,10 @@ void setup() {
       master_serial->print("tbit : ");
       master_serial->print(tbit);
       master_serial->println(" us");
+      master_serial->print("slave addr : ");
+      master_serial->println(slvno);
       offline_setup();
+      digitalWrite(BOOTING_LED, HIGH);
       break;
     case ONLINE:
     default:
@@ -182,20 +222,22 @@ void setup() {
   }
 }
 
-void sendEmission(unsigned char slvno) {
-  rx1->push(DLE);
-  rx1->push(ENQ);
-  rx1->push(slvno);
-  rx1->flush();
-  delayMicroseconds(11 * tbit);
+void sendEmission(Buffer *rx) {
+  rx->clear_tx();
+  rx->push_tx(DLE);
+  rx->push_tx(ENQ);
+  rx->push_tx(slvno);
+  rx->send();
 }
 
-enum comm_state recv_reception() {
-  unsigned long first = millis();
+enum comm_state recv_reception(Buffer *rx) {
+  unsigned long first = micros();
   unsigned char c;
+  rx->clear_rx();
   while(1) {
-    if(rx1->get_tail() > 0) {
-      switch(rx1->get_buf(0)) {
+    if(rx->available() > 0) {
+      rx->read();
+      switch(rx->get_buf(0)) {
       case DLE:
         return TRANS_DATA;
       default:
@@ -204,7 +246,7 @@ enum comm_state recv_reception() {
       }
     }
 
-    if(millis() - first > 30) {
+    if(micros() - first >= 30000) {
       return  EMISSION;
     }
   }
@@ -218,7 +260,7 @@ void online_loop() {
   static enum comm_state state = BOOTING;
   switch(state) {
     case BOOTING:
-      // Serial.println("BOOTING");
+      // master_serial->println("BOOTING");
       digitalWrite(BOOTING_LED, HIGH);
       rx1->flush_rx(11 * tbit);
       rx2->flush_rx(11 * tbit);
@@ -226,38 +268,38 @@ void online_loop() {
       digitalWrite(BOOTING_LED, LOW);
       break;
     case EMISSION:
-      // Serial.println("EMISSION");
+      // master_serial->println("EMISSION");
       if(rx2->get_tail() > 0) {
         digitalWrite(EMIT_MESSAGE_LED, HIGH);
-        // Serial.println("trans_to_serial2");
-        rx2->trans(master_serial, 11 * tbit);
+        // master_serial->println("trans_to_serial2");
+        rx2->trans(slave_serial, 11 * tbit);
         rx2->clear_rx();
         state = EMISSION;
         digitalWrite(EMIT_MESSAGE_LED, LOW);
       } else {
         digitalWrite(EMISSION_LED, HIGH);
-        // Serial.println("emission");
-        rx1->clear_rx();
-        sendEmission(0x01);
+        // master_serial->println("emission");
+        sendEmission(rx1);
         state = RECEPTION;
         digitalWrite(EMISSION_LED, LOW);
       }
       break;
     case RECEPTION:
-      // Serial.println("RECEPTION");
+      // master_serial->println("RECEPTION");
       digitalWrite(RECEPTION_LED, HIGH);
-      state = recv_reception();
+      state = recv_reception(rx1);
       digitalWrite(RECEPTION_LED, LOW);
       break;
     case TRANS_DATA:
-      // Serial.println("TRANS_DATA");
+      // master_serial->println("TRANS_DATA");
       digitalWrite(TRANSDATA_LED, HIGH);
-      rx1->trans(slave_serial, 11 * tbit);
+      rx1->trans(master_serial, 11 * tbit);
+      rx1->clear_rx();
       state = EMISSION;
       digitalWrite(TRANSDATA_LED, LOW);
       break;
     default:
-      // Serial.println("default");
+      // master_serial->println("default");
       break;
   }
 }

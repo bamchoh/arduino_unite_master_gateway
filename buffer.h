@@ -3,8 +3,10 @@
 
 class Buffer {
   protected:
-  char buf[512];
   int tail;
+  char buf[512];
+  int tx_tail;
+  char tx_buf[512];
 	HardwareSerial *serial;
 
   public:
@@ -12,10 +14,12 @@ class Buffer {
   void trans(HardwareSerial *to, unsigned long timeout);
   void read();
   void clear_rx();
+  void clear_tx();
   int get_tail();
+  int available();
   char get_buf(int idx);
-	int flush();
-	char* push(char c);
+	int send();
+	char* push_tx(char c);
 	void flush_rx(unsigned long timeout);
 };
 
