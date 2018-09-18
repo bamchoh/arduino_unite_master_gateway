@@ -12,7 +12,7 @@ class Buffer {
   public:
 	Buffer(HardwareSerial *sio);
   void trans(HardwareSerial *to, unsigned long timeout);
-  void read();
+  void readAll();
   void clear_rx();
   void clear_tx();
   int get_tail();
@@ -24,4 +24,3 @@ class Buffer {
 };
 
 #endif
-

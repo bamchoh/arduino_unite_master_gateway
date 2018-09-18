@@ -31,7 +31,7 @@ void Buffer::clear_tx() {
   tx_tail = 0;
 }
 
-void Buffer::read() {
+void Buffer::readAll() {
   tail += serial->readBytes(buf+tail, serial->available());
 }
 
@@ -79,4 +79,3 @@ void Buffer::flush_rx(unsigned long timeout) {
     }
   }
 }
-

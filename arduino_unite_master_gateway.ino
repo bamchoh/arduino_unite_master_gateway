@@ -8,6 +8,7 @@
 #define DLE 0x10
 #define EOT 0x04
 #define ENQ 0x05
+#define ACK 0x06
 
 #define BOOTING_LED 22
 #define EMISSION_LED 23
@@ -26,8 +27,8 @@ enum mode_state_enum {
 };
 volatile byte mode_state = ONLINE;
 
-volatile Buffer* rx1;
-volatile Buffer* rx2;
+Buffer* rx1;
+Buffer* rx2;
 HardwareSerial* slave_serial;
 HardwareSerial* master_serial;
 
@@ -82,7 +83,7 @@ const String keys[KEY_ARRAY_SIZE] = {
 
 void serialEvent() {
   if(mode_state != OFFLINE) {
-    rx2->read();
+    rx2->readAll();
     return;
   }
 
@@ -230,13 +231,19 @@ void sendEmission(Buffer *rx) {
   rx->send();
 }
 
+void sendAck(Buffer *rx) {
+  rx->clear_tx();
+  rx->push_tx(ACK);
+  rx->send();
+}
+
 enum comm_state recv_reception(Buffer *rx) {
   unsigned long first = micros();
   unsigned char c;
   rx->clear_rx();
   while(1) {
     if(rx->available() > 0) {
-      rx->read();
+      rx->readAll();
       switch(rx->get_buf(0)) {
       case DLE:
         return TRANS_DATA;
@@ -295,6 +302,7 @@ void online_loop() {
       digitalWrite(TRANSDATA_LED, HIGH);
       rx1->trans(master_serial, 11 * tbit);
       rx1->clear_rx();
+      sendAck(rx1);
       state = EMISSION;
       digitalWrite(TRANSDATA_LED, LOW);
       break;
